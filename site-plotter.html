@@ -1,0 +1,27 @@
+<html>
+<head>
+    <link href="site-plotter.less" type="text/css" rel="stylesheet/less" />
+    <script src="//cdnjs.cloudflare.com/ajax/libs/less.js/2.5.3/less.min.js"></script>
+</head>
+<body>
+
+<div class="site-plotter"></div>
+
+<script src='https://ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js'></script>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/babel-core/5.6.15/browser.js'></script>
+<script>
+var myRDP, myRDPCalculator; // initialized by loaded JS
+(function () {
+  // TODO: get list of es6 files from $('head'), load them all
+  // TODO: move babel and less.js to an autocompile.js file?
+  // make a separate github for that?
+  $.get("site-plotter.es6", function(data) {
+    eval(babel(data).code);
+  });
+}());
+</script>
+
+<!-- div id="library" style="display:none;"></div -->
+
+</body></html>
+
