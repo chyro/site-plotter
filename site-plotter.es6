@@ -17,9 +17,7 @@
  * -- plot: load the objects specified in the URL and display them
  *
  * Beta version:
-TODO now
- * - make GUI controls work, to be usable from www:
- * -- clear all
+ * - Basic GUI controls, usable from www:
  * -- add object
  * -- add point
  *
@@ -28,55 +26,94 @@ TODO now
  * ~ add primary points, add secondary points relative to any two primary points
  * ~ scale canvas to include all the required points
  * ~ user-GUI to scale / rotate canvas
+ * ~ merge two series of objects? (i.e. two URLs)
  */
 
-const baseLayout = `<canvas class="site" width="1000" height="1000"></canvas><div class="controls"><button class="add-primary">+primary point</button><button class="add-item">+item</button><span class="log"></span></div>`;
+const templateBaseLayout = `<canvas class="site" width="1000" height="1000"></canvas><div class="controls"><div class="main"><button class="add-object">+</button><button class="redraw">redraw</button></div><div class="objects"></div></div><div class="log"></div>`;
+const templateObject = `<div class="object"><span class="label"></span><div class="controls"><!-- button class="delete-object">-</button --><button class="add-point-bo">BO |-</button><button class="add-point-tri">Tri |&gt;</button></div><div class="points"></div></div>`;
 
 class SitePlotter {
-    // properties:
-    // area: HTML object
-    // siteMap: HTML object
-    // controls: HTML object
-    // primaryPoints: array of points, to use for baseline // TODO
+    // divArea: DOMElement the whole container
+    // divSite: DOMElement canvas for the graphic representation
+    // divControls: DOMElement user controls to add objects / points
+    // divObjects: DOMElement list of objects / points
+    // divLog: DOMElement for the log
     // objects: array of SiteObjects
+
+    //TODO: primaryPoints: array of points, to use for baseline
+
     constructor(area) {
-        this.area = area;
+        this.divArea = area;
         this.objects = [];
 
         // Set up layout
-        $(area).append($(baseLayout));
-        this.siteMap = $(".site", area)[0];
-        this.controls = $(".controls", area)[0];
-
-        Styler.drawCross(this.siteMap, 0, 500);
+        $(area).append(templateBaseLayout);
+        this.divSite = $(".site", area)[0];
+        this.divControls = $(".controls", area)[0];
+        this.divObjects = $(".objects", area)[0];
+        this.divLog = $(".log", area)[0];
 
         // Control events
-        //var that = this;
-        //$(".add-etcetc", this.controls).on("click", function(e) { that.addEtcetc(); } );
+        let that = this;
+        $(".add-object", this.divControls).on("click", function(){that.showObjectModal()});
+        $(".redraw", this.divControls).on("click", function(){that.redraw();});
     }
 
     log(message) {
-        $(".log", this.controls).text(message);
+        $(this.divLog).prepend("<p>" + message + "</p>");
+    }
+
+    showObjectModal() {
+        DomHelper.userInput({label: "string"}, {create: this.handlerCreateObject, cancel: this.handlerCancel}, this);
+    }
+
+    handlerCancel() {} // do nothing
+
+    handlerCreateObject(variables, context) {
+        let newO = new SiteObject(variables['label']);
+        context.addObject(newO);
     }
 
     addObject(object) {
-        this.objects.push(object);
-        this.drawObject(object);
-        //TODO: might need a boundary check, and potential scale / redraw
-        //TODO: Actually, this needs a better mechanism overall, e.g. manual draw on request, or auto-redraw on every change
-    }
-
-    drawObject(object) {
+        object.setSite(this); // callback in case the object needs to request a redraw
         if (object.color == undefined) {
             object.color = Styler.getRandomColor();
         }
 
-        //draw the object on the canvas
-        for (let i = 0; i < object.points.length; i++) {
-            Styler.drawCross(this.siteMap, object.points[i][0], 500+object.points[i][1], object.color);
-        }
+        this.objects.push(object);
 
-        console.log(location.origin + location.pathname + '?plot=' + JSON.stringify(this.getJson()));
+        this.redraw();
+    }
+
+    redraw() {
+        // Clear
+        this.divSite.getContext("2d").clearRect(0, 0, this.divSite.width, this.divSite.height);
+        $(this.divObjects).html("");
+
+        // Draw baseline
+        Styler.drawBaseline(this.divSite, [0, 500], [1000, 500]);
+
+        // Draw objects on the canvas
+        //TODO: might need a boundary check, and potential scale / redraw
+        let nbPoints = 0;
+        for (let i = 0; i < this.objects.length; i++) {
+            let object = this.objects[i];
+            for (let j = 0; j < object.points.length; j++) {
+                nbPoints++;
+                let point = object.points[j];
+                Styler.drawCross(this.divSite, point[0], 500+point[1], object.color);
+                // does a +[0,500] to the coordinates, to match the primary point the measurements were based on. When primary points are programmed, this will need to be dynamic.
+            }
+        };
+
+        // Display objects on the log
+        for (let i = 0; i < this.objects.length; i++) {
+            $(this.divObjects).prepend(this.objects[i].getOverview()); // newest first
+        };
+
+        // Dump the URL
+        let url = location.origin + location.pathname + '?plot=' + JSON.stringify(this.getJson());
+        this.log("<a href='" + url + "'>Link (" + this.objects.length + " objects, " + nbPoints + " points)</a>");
     }
 
     getJson() {
@@ -85,6 +122,7 @@ class SitePlotter {
             let obj = this.objects[i];
             json[obj.label] = obj.points;
             // TODO: json[obj.label] = { points: obj.points, shape: etc };
+            // TODO maybe: get original measurements rather than extrapolated coordinates
         }
         return json;
     }
@@ -101,6 +139,7 @@ class SitePlotter {
                 points = objects[objName]['points'];
             }
 
+            // Using a quickfix to differentiate pointBO and pointTri... this needs to be improved at some stage
             for (let i = 0; i < points.length; i++) {
                 if (points[i].length == 2) {
                     newObj.addPointBO(points[i][0], points[i][1]);
@@ -140,6 +179,60 @@ class DomHelper {
             if (tmp[0] === val) result = decodeURIComponent(tmp[1]);
         });
         return result;
+    }
+
+    /**
+     * Magic modal
+     *
+     * Given an array of variables and callbacks, this function displays a modal box
+     * with input fields for each variable and buttons for each callback. Upon
+     * clicking a button, the modal box disappears and the selected callback is
+     * called with as parameter an array containing the values entered by the user
+     * for each variable.
+     *
+     * TODO: add a slugify function somewhere so labels can be more flexible
+     * TODO: add a way to set value for variables, so that a "settings" box would have current settings filled in
+     * TODO: converting types might be good, returning numbers as strings doesn't always work.
+     *
+     * @params variables Array {name: type}
+     * @params buttons   Array {label: function(variables) { handle(); }}
+     */
+    static userInput(variables, buttons, context) {
+        // Generate input fields
+        let variablesHTML = "";
+        for (let varname in variables) {
+            variablesHTML += "<div class='field'><label>" + varname + "</label><input name='" + varname + "'/>";
+            // TODO: Do something about the types? Validations? Dropdowns?
+        }
+
+        // Generate action buttons
+        let buttonsHTML = "";
+        for (let label in buttons) {
+            buttonsHTML += "<button class='" + label + "'>" + label + "</button>";
+        }
+
+        // set events on buttons
+        let modal = $("<div class='modal'><div class='bg'></div><div class='body'><div class='fields'>" + variablesHTML + "</div><div class='buttons'>" + buttonsHTML + "</div></div></div>");
+        for (let label in buttons) {
+            let handler = buttons[label];
+            $("." + label, modal).click(function(ev) {
+                // gather variables
+                let userVars = [];
+                for (let varname in variables) {
+                    userVars[varname] = $("input[name=" + varname + "]", modal).val();
+                }
+
+                // call action handler
+                handler(userVars, context);
+
+                // close modal
+                $('body > .modal').remove();
+            } );
+        }
+
+        // show a modal with the two snippets
+        $(document.body).append(modal);
+        modal.find("input").first().focus();
     }
 }
 
@@ -187,6 +280,19 @@ class Styler {
 // Rounded corners?
     }
 
+    static drawBaseline(canvas, pointA, pointB) {
+        this.drawCross(canvas, pointA[0], pointA[1]);
+        this.drawCross(canvas, pointB[0], pointB[1]);
+
+        let ctx = canvas.getContext("2d");
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#999";
+        ctx.beginPath();
+        ctx.moveTo(pointA[0], pointA[1]);
+        ctx.lineTo(pointB[0], pointB[1]);
+        ctx.stroke();
+    }
+
     // TODO: style = "rainbow", style = "pencil", etc
     static getRandomColor() {
         let color;
@@ -198,7 +304,7 @@ class Styler {
         //color = '#'+Math.random().toString(10).substr(-6);
 
         // ensuring diversity by hardcoding colors (there must be a better way!)
-        const randomColors = ["red", "blue", "green", "orange", "purple", "gray", "brown", "yellow"];
+        const randomColors = ["red", "blue", "green", "orange", "purple", "gray", "brown", "yellow", "IndianRed", "Indigo", "LimeGreen", "Navy"];
         let index = 0;
         if (this.lastColor != undefined && randomColors.indexOf(this.lastColor) != randomColors.length-1) {
             index = randomColors.indexOf(this.lastColor) + 1;
@@ -215,8 +321,9 @@ class SiteObject {
     // points: array of points, coordX = down from A ; coordY = right from (A,B) baseline if positive, left if negative
     // shape:  "oval", "polygon", maybe some more later
     // color:  HTML color, optional
+    // site:   SitePlotter object, in case callback is required
 
-    constructor(label) {
+    constructor(label = "") {
         this.label = label;
         this.points = [];
         this.shape = "polygon";
@@ -240,6 +347,9 @@ class SiteObject {
         let coordX = baseline;
         let coordY = offset;
         this.points.push([coordX, coordY]);
+
+        // redraw if applicable
+        if (this.site != undefined) this.site.redraw();
     }
 
     /**
@@ -273,7 +383,15 @@ class SiteObject {
         let Zx = Y[0] - side * lengthYZ * Math.cos(angleXYZ);
         let Zy = Y[1] + lengthYZ * Math.sin(angleXYZ);
 
+        if (isNaN(Zx) || isNaN(Zy)) {
+            this.site.log("Could not calculate coordinates");
+            return;
+        }
+
         this.points.push([Zx, side * Zy]);
+
+        // redraw if applicable
+        if (this.site != undefined) this.site.redraw();
     }
 
     /**
@@ -287,6 +405,10 @@ class SiteObject {
         // TODO: check all the points, make sure most are on the right side, if not then reverse everything
     }
 
+    setSite(site) {
+        this.site = site;
+    }
+
     setShape(shape) {
         this.shape = shape;
     }
@@ -294,6 +416,40 @@ class SiteObject {
     setColor(color) {
         this.color = color;
     }
+
+    getOverview() {
+        let overview = $(templateObject);
+        $(".label", overview).text(this.label);
+
+        // Displaying the points
+        for (let i = 0; i < this.points.length; i++)
+            $(".points", overview).append("<p>[" + this.points[i].join() + "]</p>");
+
+        // Control buttons
+        let that = this;
+        $(".add-point-bo", overview).on("click", function(){that.showPointBOModal()});
+        $(".add-point-tri", overview).on("click", function(){that.showPointTriModal()});
+
+        return overview;
+    }
+
+    showPointBOModal() {
+        DomHelper.userInput({baseline: "int", offset: "int"}, {create: this.handlerCreatePointBO, cancel: this.handlerCancel}, this);
+    }
+
+    showPointTriModal() {
+        DomHelper.userInput({baseline1: "int", triangulation1: "int", baseline2: "int", triangulation2: "int"}, {create: this.handlerCreatePointTri, cancel: this.handlerCancel}, this);
+    }
+
+    handlerCreatePointBO(variables, context) {
+        context.addPointBO(parseInt(variables.baseline), parseInt(variables.offset));
+    }
+
+    handlerCreatePointTri(variables, context) {
+        context.addPointTri(variables.baseline1, variables.triangulation1, variables.baseline2, variables.triangulation2);
+    }
+
+    handlerCancel() {} // do nothing
 }
 
 // Making available to upper scopes
@@ -394,7 +550,7 @@ if (DomHelper.getVar('testtri') == 1) {
     mySitePlotter.addObject(col5);
 }
 
+// Loading requested points if any
 if (DomHelper.getVar('plot') != undefined) {
     mySitePlotter.loadJson(DomHelper.getVar('plot'));
 }
-
