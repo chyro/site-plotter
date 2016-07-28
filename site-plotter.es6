@@ -30,7 +30,7 @@
  */
 
 const templateBaseLayout = `<canvas class="site" width="1000" height="1000"></canvas><div class="controls"><div class="main"><button class="add-object">+</button><button class="redraw">redraw</button></div><div class="objects"></div></div><div class="log"></div>`;
-const templateObject = `<div class="object"><span class="label"></span><div class="controls"><!-- button class="delete-object">-</button --><button class="add-point-bo">BO |-</button><button class="add-point-tri">Tri |&gt;</button></div><div class="points"></div></div>`;
+const templateObject = `<div class="object"><span class="label"></span><div class="controls"><!-- button class="delete-object">-</button --><button class="add-point-bo">BO |-</button><button class="add-point-tri">Tri |&gt;</button><button class="add-point-bearing">Bearing |/</button></div><div class="points"></div></div>`;
 
 class SitePlotter {
     // divArea: DOMElement the whole container
@@ -86,25 +86,62 @@ class SitePlotter {
     }
 
     redraw() {
+        let padding = 10;
+        let area = {w: this.divSite.width, h: this.divSite.height};
+
         // Clear
-        this.divSite.getContext("2d").clearRect(0, 0, this.divSite.width, this.divSite.height);
+        this.divSite.getContext("2d").clearRect(0, 0, area.w, area.h);
         $(this.divObjects).html("");
 
-        // Draw baseline
-        Styler.drawBaseline(this.divSite, [0, 500], [1000, 500]);
-
-        // Draw objects on the canvas
-        //TODO: might need a boundary check, and potential scale / redraw
+        //Boundary check: center the points
         let nbPoints = 0;
+        let boundaries = {minX: 0, maxX: 0, minY: 0, maxY: 0};
         for (let i = 0; i < this.objects.length; i++) {
             let object = this.objects[i];
             for (let j = 0; j < object.points.length; j++) {
                 nbPoints++;
                 let point = object.points[j];
-                Styler.drawCross(this.divSite, point[0], 500+point[1], object.color);
+                if (boundaries.minX > point[0]) boundaries.minX = point[0];
+                if (boundaries.maxX < point[0]) boundaries.maxX = point[0];
+                if (boundaries.minY > point[1]) boundaries.minY = point[1];
+                if (boundaries.maxY < point[1]) boundaries.maxY = point[1];
+            }
+        }
+        let scale = 1;
+        let translation = [0, area.h / 2];
+        if (boundaries.maxX - boundaries.minX > 0 && boundaries.maxY - boundaries.minY > 0) {
+            let scaleX = (area.w - padding * 2) / (boundaries.maxX - boundaries.minX);
+            let scaleY = (area.h - padding * 2) / (boundaries.maxY - boundaries.minY);
+            scale = Math.min(scaleX, scaleY);
+
+            translation[0] = ((area.w - (boundaries.maxX - boundaries.minX) * scale) / 2) - boundaries.minX * scale;
+            translation[1] = ((area.h - (boundaries.maxY - boundaries.minY) * scale) / 2) - boundaries.minY * scale;
+        }
+        //Should do a Styler.setScale(scale); Styler.setTranslation(translation); ?
+
+        // Draw baseline
+        let referencePoints = {A: {x: 0, y:0}, B: {x: 500, y: 0}, C: {x: -500, y: 0}};
+        Styler.drawBaseline(this.divSite,
+            [
+                (referencePoints.A.x) * scale + translation[0],
+                (referencePoints.A.y) * scale + translation[1]
+            ], [
+                (referencePoints.B.x) * scale + translation[0],
+                (referencePoints.B.y) * scale + translation[1]
+            ]
+        );
+
+        // Draw objects on the canvas
+        for (let i = 0; i < this.objects.length; i++) {
+            let object = this.objects[i];
+            for (let j = 0; j < object.points.length; j++) {
+                let point = object.points[j];
+                Styler.drawCross(this.divSite, point[0] * scale + translation[0], point[1] * scale + translation[1], object.color);
                 // does a +[0,500] to the coordinates, to match the primary point the measurements were based on. When primary points are programmed, this will need to be dynamic.
             }
         };
+
+        //Maybe: add a function to set the bearing of the site, rotate everything after drawing
 
         // Display objects on the log
         for (let i = 0; i < this.objects.length; i++) {
@@ -192,7 +229,7 @@ class DomHelper {
      *
      * TODO: add a slugify function somewhere so labels can be more flexible
      * TODO: add a way to set value for variables, so that a "settings" box would have current settings filled in
-     * TODO: converting types might be good, returning numbers as strings doesn't always work.
+     * TODO: converting types might be good, returning numbers as strings doesn't always work. Also, setting inputs to int mode could help with mobile keyboards.
      *
      * @params variables Array {name: type}
      * @params buttons   Array {label: function(variables) { handle(); }}
@@ -343,7 +380,7 @@ class SiteObject {
      * b = 4, o = 5
      */
     addPointBO(baseline, offset) {
-        // ALPHA: all points are based on point A (0,0), left middle, baseline straight right.
+        // ALPHA: all points are based on point A (0,0), left middle, baseline straight right, north straight up.
         let coordX = baseline;
         let coordY = offset;
         this.points.push([coordX, coordY]);
@@ -373,7 +410,7 @@ class SiteObject {
         tri2 = Math.abs(tri2);
         // let's calculate the triangle XYZ, with X and Y being along the baseline and Z being the mystery point
 
-        // ALPHA: all points are based on point A (0,0), left middle, baseline straight right.
+        // ALPHA: all points are based on point A (0,0), left middle, baseline straight right, north straight up.
         let X = [baseline1, 0];
         let Y = [baseline2, 0];
         let lengthXY = Math.abs(baseline2-baseline1);
@@ -395,15 +432,47 @@ class SiteObject {
     }
 
     /**
+     * Add a point using distance/bearing measurements
+     *
+     *  N
+     *  |
+     *  |
+     *  |  P
+     *  | /
+     *  |/
+     *  A---E
+     * Measurements: 2 - 60
+     */
+    addPointBearing(distance, bearing) {
+        // ALPHA: all points are based on point A (0,0), left middle, baseline straight right, north straight up.
+        bearing = bearing - 90; // setting north up, not right
+        let coordX = distance * Math.cos(bearing * Math.PI / 180);
+        let coordY = distance * Math.sin(bearing * Math.PI / 180);
+
+        if (isNaN(coordX) || isNaN(coordY)) {
+            this.site.log("Could not calculate coordinates");
+            return;
+        }
+
+        this.points.push([coordX, coordY]);
+
+        // redraw if applicable
+        if (this.site != undefined) this.site.redraw();
+    }
+
+    /**
      * Force side
      *
      * Ignore coordinates, force object to be on the specified side, mirror image
      * if required.
+     *
+     * Is this really useful? To clear mistakes in the measurements? To offer simpler measuring method?
+     *
      * What if an object is overlapping the baseline?
-     */
     setSide(side) {
-        // TODO: check all the points, make sure most are on the right side, if not then reverse everything
+        //check all the points, make sure most are on the right side, if not then reverse everything
     }
+    */
 
     setSite(site) {
         this.site = site;
@@ -429,6 +498,7 @@ class SiteObject {
         let that = this;
         $(".add-point-bo", overview).on("click", function(){that.showPointBOModal()});
         $(".add-point-tri", overview).on("click", function(){that.showPointTriModal()});
+        $(".add-point-bearing", overview).on("click", function(){that.showPointBearingModal()});
 
         return overview;
     }
@@ -441,12 +511,20 @@ class SiteObject {
         DomHelper.userInput({baseline1: "int", triangulation1: "int", baseline2: "int", triangulation2: "int"}, {create: this.handlerCreatePointTri, cancel: this.handlerCancel}, this);
     }
 
+    showPointBearingModal() {
+        DomHelper.userInput({distance: "int", bearing: "int"}, {create: this.handlerCreatePointBearing, cancel: this.handlerCancel}, this);
+    }
+
     handlerCreatePointBO(variables, context) {
         context.addPointBO(parseInt(variables.baseline), parseInt(variables.offset));
     }
 
     handlerCreatePointTri(variables, context) {
         context.addPointTri(variables.baseline1, variables.triangulation1, variables.baseline2, variables.triangulation2);
+    }
+
+    handlerCreatePointBearing(variables, context) {
+        context.addPointBearing(variables.distance, variables.bearing);
     }
 
     handlerCancel() {} // do nothing
