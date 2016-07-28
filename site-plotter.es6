@@ -229,7 +229,7 @@ class DomHelper {
      *
      * TODO: add a slugify function somewhere so labels can be more flexible
      * TODO: add a way to set value for variables, so that a "settings" box would have current settings filled in
-     * TODO: converting types might be good, returning numbers as strings doesn't always work. Also, setting inputs to int mode could help with mobile keyboards.
+     * TODO: converting types might be good, returning numbers as strings doesn't always work.
      *
      * @params variables Array {name: type}
      * @params buttons   Array {label: function(variables) { handle(); }}
@@ -238,7 +238,8 @@ class DomHelper {
         // Generate input fields
         let variablesHTML = "";
         for (let varname in variables) {
-            variablesHTML += "<div class='field'><label>" + varname + "</label><input name='" + varname + "'/>";
+            let extraAttr = variables[varname] == 'int' ? 'type="number" ' : '';
+            variablesHTML += "<div class='field'><label>" + varname + "</label><input name='" + varname + "' " + extraAttr + "/>";
             // TODO: Do something about the types? Validations? Dropdowns?
         }
 
